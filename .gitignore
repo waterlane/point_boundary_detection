@@ -1,0 +1,22 @@
+# 忽略常见缓存、数据和虚拟环境文件
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+*.bak
+*.tmp
+*.log
+*.DS_Store
+.env
+.venv
+venv/
+ENV/
+.envrc
+.idea/
+.vscode/
+*.egg-info/
+data/
+outputs/
+*.pth
