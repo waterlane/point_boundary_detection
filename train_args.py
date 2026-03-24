@@ -1,6 +1,7 @@
 import argparse
 import os
 
+
 def get_args():
     parser = argparse.ArgumentParser(description="Point Boundary Detection Training")
     parser.add_argument('--points', type=str, default=os.path.join('data', 'points.ply'),
@@ -12,4 +13,8 @@ def get_args():
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--sigma', type=float, default=0.02, help='Sigma for soft label')
     parser.add_argument('--output', type=str, default='model.pth', help='Path to save model')
+    parser.add_argument('--boundary_threshold', type=float, default=0.005,
+                        help='Boundary distance threshold for focused training and evaluation')
+    parser.add_argument('--boundary_weight', type=float, default=6.0,
+                        help='Extra weight for near-boundary points in the loss')
     return parser.parse_args()
