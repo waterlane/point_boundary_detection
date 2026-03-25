@@ -20,3 +20,4 @@ ENV/
 data/
 outputs/
 *.pth
+*.ply
