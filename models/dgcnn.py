@@ -12,6 +12,7 @@ class DGCNN(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(emb_dim, 64),
             nn.ReLU(),
+            nn.Dropout(p=0.1),
             nn.Linear(64, 1)
         )
 
@@ -21,11 +22,11 @@ class DGCNN(nn.Module):
             x = x.unsqueeze(0)  # (1, 3)
         if x.dim() == 2:
             feat = self.relu(self.mlp1(x))  # (N, emb_dim)
-            out = self.classifier(feat)  # (N, 1)
+            out = F.softplus(self.classifier(feat))  # (N, 1), 约束为非负距离
             return out.squeeze(-1)  # (N,)
         elif x.dim() == 3:
             feat = self.relu(self.mlp1(x))  # (B, N, emb_dim)
-            out = self.classifier(feat)  # (B, N, 1)
+            out = F.softplus(self.classifier(feat))  # (B, N, 1), 约束为非负距离
             return out.squeeze(-1)  # (B, N)
         else:
             raise ValueError('输入维度不支持')

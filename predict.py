@@ -25,7 +25,6 @@ def predict_on_csv(csv_path, model_path="model.pth", device="cpu", print_num=10,
     with torch.no_grad():
         pts = torch.from_numpy(points).to(device)
         pred = model(pts)
-        pred = torch.sigmoid(pred)
         pred = pred.cpu().numpy().flatten()
     print("全部点的预测结果：")
     print(pred)

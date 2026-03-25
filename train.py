@@ -15,6 +15,12 @@ from utils.metrics import compute_boundary_metrics
 
 args = get_args()
 
+random.seed(args.seed)
+np.random.seed(args.seed)
+torch.manual_seed(args.seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(args.seed)
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = DGCNN().to(device)
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
@@ -32,19 +38,69 @@ test_files = csv_files[split_idx:]
 train_dataset = CsvPointDataset(train_files)
 test_dataset = CsvPointDataset(test_files)
 
-train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
+train_loader = DataLoader(
+    train_dataset,
+    batch_size=args.batch_size,
+    shuffle=True,
+    num_workers=args.num_workers,
+    pin_memory=torch.cuda.is_available(),
+)
+test_loader = DataLoader(
+    test_dataset,
+    batch_size=args.batch_size,
+    shuffle=False,
+    num_workers=args.num_workers,
+    pin_memory=torch.cuda.is_available(),
+)
+
+
+def evaluate(model, data_loader, device, max_batches=0):
+    model.eval()
+    all_preds = []
+    all_labels = []
+    with torch.no_grad():
+        test_iter = tqdm(data_loader, desc="Testing", leave=False)
+        for batch_idx, batch in enumerate(test_iter):
+            if max_batches > 0 and batch_idx >= max_batches:
+                break
+            pts = batch["points"].to(device)
+            labels = batch["labels"].to(device)
+
+            pred = model(pts)
+
+            all_preds.append(pred.cpu().numpy())
+            all_labels.append(labels.cpu().numpy())
+
+    if not all_preds:
+        return None, None, None
+
+    all_preds = np.concatenate(all_preds)
+    all_labels = np.concatenate(all_labels)
+
+    mse = np.mean((all_preds - all_labels) ** 2)
+    mae = np.mean(np.abs(all_preds - all_labels))
+    near_metrics = compute_boundary_metrics(
+        all_preds,
+        all_labels,
+        boundary_threshold=args.boundary_threshold,
+    )
+    return mse, mae, near_metrics
+
+
+best_mae = float("inf")
+epochs_without_improve = 0
 
 for epoch in range(args.epochs):
     model.train()
     train_iter = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{args.epochs}")
 
     for batch_idx, batch in enumerate(train_iter):
+        if args.max_train_batches > 0 and batch_idx >= args.max_train_batches:
+            break
         pts = batch["points"].to(device)
         labels = batch["labels"].to(device)
 
         pred = model(pts)
-        pred = torch.sigmoid(pred)
 
         loss = boundary_aware_distance_loss(
             pred,
@@ -66,43 +122,30 @@ for epoch in range(args.epochs):
             print('loss:', loss.item())
 
     print(f"Epoch {epoch + 1}/{args.epochs}, Loss: {loss.item():.4f}")
+    mse, mae, near_metrics = evaluate(model, test_loader, device, max_batches=args.max_test_batches)
+    if mse is not None:
+        print(f"Test MSE: {mse:.4f}, MAE: {mae:.4f}")
+        print(
+            "Near-boundary metrics "
+            f"(threshold={args.boundary_threshold}): "
+            f"P={near_metrics['precision']:.4f}, "
+            f"R={near_metrics['recall']:.4f}, "
+            f"F1={near_metrics['f1']:.4f}, "
+            f"TP={near_metrics['tp']}, FP={near_metrics['fp']}, FN={near_metrics['fn']}"
+        )
 
-# 训练完成后在测试集评估
-model.eval()
-all_preds = []
-all_labels = []
-with torch.no_grad():
-    test_iter = tqdm(test_loader, desc="Testing")
-    for batch in test_iter:
-        pts = batch["points"].to(device)
-        labels = batch["labels"].to(device)
+        if mae < (best_mae - args.early_stop_min_delta):
+            best_mae = mae
+            epochs_without_improve = 0
+        else:
+            epochs_without_improve += 1
 
-        pred = model(pts)
-        pred = torch.sigmoid(pred)
-
-        all_preds.append(pred.cpu().numpy())
-        all_labels.append(labels.cpu().numpy())
-
-if all_preds:
-    all_preds = np.concatenate(all_preds)
-    all_labels = np.concatenate(all_labels)
-
-    mse = np.mean((all_preds - all_labels) ** 2)
-    mae = np.mean(np.abs(all_preds - all_labels))
-    near_metrics = compute_boundary_metrics(
-        all_preds,
-        all_labels,
-        boundary_threshold=args.boundary_threshold,
-    )
-    print(f"Test MSE: {mse:.4f}, MAE: {mae:.4f}")
-    print(
-        "Near-boundary metrics "
-        f"(threshold={args.boundary_threshold}): "
-        f"P={near_metrics['precision']:.4f}, "
-        f"R={near_metrics['recall']:.4f}, "
-        f"F1={near_metrics['f1']:.4f}, "
-        f"TP={near_metrics['tp']}, FP={near_metrics['fp']}, FN={near_metrics['fn']}"
-    )
+        if args.early_stop_patience > 0 and epochs_without_improve >= args.early_stop_patience:
+            print(
+                f"Early stopping at epoch {epoch + 1}, "
+                f"best MAE={best_mae:.4f}, patience={args.early_stop_patience}"
+            )
+            break
 
 # 保存模型
 torch.save(model.state_dict(), args.output)
