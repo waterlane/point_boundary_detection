@@ -22,6 +22,12 @@ def boundary_aware_distance_loss(
     target,
     boundary_threshold=0.005,
     boundary_weight=6.0,
+    reg_loss_weight=1.0,
+    cls_loss_weight=1.0,
+    smooth_l1_beta=0.002,
+    focal_gamma=2.0,
+    focal_alpha=0.75,
+    max_pos_weight=5.0,
 ):
     """
     针对“距离边界越近越重要”的回归损失：
@@ -33,14 +39,26 @@ def boundary_aware_distance_loss(
     # 回归项：小距离点有更大权重
     near_factor = torch.exp(-target / (boundary_threshold + eps))
     point_weight = 1.0 + boundary_weight * near_factor
-    reg_loss = (point_weight * torch.abs(pred - target)).mean()
+    reg_error = F.smooth_l1_loss(pred, target, beta=smooth_l1_beta, reduction='none')
+    reg_loss = (point_weight * reg_error).mean()
 
     # 分类项：提升“是否靠近边界”的可分性
     near_target = (target <= boundary_threshold).float()
     near_logit = (boundary_threshold - pred) / (boundary_threshold + eps)
 
     pos_weight = (near_target.numel() - near_target.sum()) / (near_target.sum() + eps)
-    pos_weight = torch.clamp(pos_weight, min=1.0)
-    cls_loss = F.binary_cross_entropy_with_logits(near_logit, near_target, pos_weight=pos_weight)
+    pos_weight = torch.clamp(pos_weight, min=1.0, max=max_pos_weight)
 
-    return reg_loss + cls_loss
+    bce = F.binary_cross_entropy_with_logits(
+        near_logit,
+        near_target,
+        pos_weight=pos_weight,
+        reduction='none',
+    )
+    prob = torch.sigmoid(near_logit)
+    p_t = prob * near_target + (1.0 - prob) * (1.0 - near_target)
+    alpha_t = focal_alpha * near_target + (1.0 - focal_alpha) * (1.0 - near_target)
+    focal_weight = alpha_t * torch.pow(1.0 - p_t, focal_gamma)
+    cls_loss = (focal_weight * bce).mean()
+
+    return reg_loss_weight * reg_loss + cls_loss_weight * cls_loss
