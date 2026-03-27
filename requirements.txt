@@ -1,0 +1,8 @@
+numpy
+pandas
+plyfile
+scikit-learn
+scipy
+torch
+tqdm
+open3d
