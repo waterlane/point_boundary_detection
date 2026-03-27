@@ -28,6 +28,9 @@ def boundary_aware_distance_loss(
     focal_gamma=2.0,
     focal_alpha=0.75,
     max_pos_weight=5.0,
+    far_distance_threshold=0.01,
+    far_penalty_weight=2.0,
+    far_penalty_power=1.5,
 ):
     """
     针对“距离边界越近越重要”的回归损失：
@@ -61,4 +64,17 @@ def boundary_aware_distance_loss(
     focal_weight = alpha_t * torch.pow(1.0 - p_t, focal_gamma)
     cls_loss = (focal_weight * bce).mean()
 
-    return reg_loss_weight * reg_loss + cls_loss_weight * cls_loss
+    # 额外惩罚远离边界的点被压到 near-boundary 阈值以内。
+    far_mask = (target > far_distance_threshold).float()
+    false_near_margin = torch.relu(boundary_threshold - pred)
+    far_scale = torch.pow(
+        torch.clamp(target / (far_distance_threshold + eps), min=1.0),
+        far_penalty_power,
+    )
+    far_fp_loss = (far_mask * far_scale * false_near_margin).mean()
+
+    return (
+        reg_loss_weight * reg_loss
+        + cls_loss_weight * cls_loss
+        + far_penalty_weight * far_fp_loss
+    )

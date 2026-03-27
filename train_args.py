@@ -42,6 +42,12 @@ def get_args():
                         help='Focal loss alpha for the near-boundary classification term')
     parser.add_argument('--max_pos_weight', type=float, default=5.0,
                         help='Upper bound for positive class weight to prevent extreme imbalance from dominating')
+    parser.add_argument('--far_distance_threshold', type=float, default=0.01,
+                        help='Distance above which false near-boundary predictions are treated as far false positives')
+    parser.add_argument('--far_penalty_weight', type=float, default=2.0,
+                        help='Weight for penalizing far false-positive near-boundary predictions')
+    parser.add_argument('--far_penalty_power', type=float, default=1.5,
+                        help='Exponent used when scaling the far false-positive penalty by true distance')
     parser.add_argument('--small_k_neighbors', type=int, default=16,
                         help='Number of nearest neighbors in the small-scale local patch')
     parser.add_argument('--large_k_neighbors', type=int, default=32,

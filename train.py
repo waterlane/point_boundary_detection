@@ -13,7 +13,7 @@ from losses.loss import boundary_aware_distance_loss
 from models.dgcnn import DGCNN
 from models.pointnet2 import PointNet2BoundaryNet
 from train_args import get_args
-from utils.metrics import compute_boundary_metrics
+from utils.metrics import compute_boundary_metrics, compute_boundary_quality_metrics
 
 
 args = get_args()
@@ -198,7 +198,7 @@ def evaluate(model, data_loader, device, max_batches=0):
             all_labels.append(labels.cpu().numpy())
 
     if not all_preds:
-        return None, None, None, None, None
+        return None, None, None, None, None, None
 
     all_preds = np.concatenate(all_preds)
     all_labels = np.concatenate(all_labels)
@@ -210,12 +210,18 @@ def evaluate(model, data_loader, device, max_batches=0):
         all_labels,
         boundary_threshold=args.boundary_threshold,
     )
+    quality_metrics = compute_boundary_quality_metrics(
+        all_preds,
+        all_labels,
+        boundary_threshold=args.boundary_threshold,
+        far_distance_threshold=args.far_distance_threshold,
+    )
     best_threshold, best_threshold_metrics = find_best_threshold(
         all_preds,
         all_labels,
         scan_thresholds,
     )
-    return mse, mae, near_metrics, best_threshold, best_threshold_metrics
+    return mse, mae, near_metrics, quality_metrics, best_threshold, best_threshold_metrics
 
 
 best_metric = -float("inf") if args.early_stop_metric in {"f1", "precision", "recall"} else float("inf")
@@ -272,6 +278,9 @@ for epoch in range(start_epoch, total_epochs):
             focal_gamma=args.focal_gamma,
             focal_alpha=args.focal_alpha,
             max_pos_weight=args.max_pos_weight,
+            far_distance_threshold=args.far_distance_threshold,
+            far_penalty_weight=args.far_penalty_weight,
+            far_penalty_power=args.far_penalty_power,
         )
 
         optimizer.zero_grad()
@@ -287,13 +296,13 @@ for epoch in range(start_epoch, total_epochs):
             print('loss:', loss.item())
 
     print(f"Epoch {epoch + 1}/{total_epochs}, Loss: {loss.item():.4f}")
-    train_mse, train_mae, train_near_metrics, train_best_threshold, train_best_threshold_metrics = evaluate(
+    train_mse, train_mae, train_near_metrics, train_quality_metrics, train_best_threshold, train_best_threshold_metrics = evaluate(
         model,
         train_loader,
         device,
         max_batches=args.max_train_eval_batches,
     )
-    mse, mae, near_metrics, best_threshold, best_threshold_metrics = evaluate(
+    mse, mae, near_metrics, quality_metrics, best_threshold, best_threshold_metrics = evaluate(
         model,
         test_loader,
         device,
@@ -306,6 +315,12 @@ for epoch in range(start_epoch, total_epochs):
                 f"P={train_near_metrics['precision']:.4f}, "
                 f"R={train_near_metrics['recall']:.4f}, "
                 f"F1={train_near_metrics['f1']:.4f}"
+            )
+            print(
+                "Train quality: "
+                f"far_fp={train_quality_metrics['far_fp_count']}, "
+                f"far_fp_mean_dist={train_quality_metrics['far_fp_mean_distance']:.4f}, "
+                f"continuity={train_quality_metrics['continuity_score']:.4f}"
             )
             print(
                 "Train best-threshold "
@@ -323,6 +338,13 @@ for epoch in range(start_epoch, total_epochs):
             f"R={near_metrics['recall']:.4f}, "
             f"F1={near_metrics['f1']:.4f}, "
             f"TP={near_metrics['tp']}, FP={near_metrics['fp']}, FN={near_metrics['fn']}"
+        )
+        print(
+            "Test quality: "
+            f"far_fp={quality_metrics['far_fp_count']}, "
+            f"far_fp_mean_dist={quality_metrics['far_fp_mean_distance']:.4f}, "
+            f"fp_mean_dist={quality_metrics['fp_mean_distance']:.4f}, "
+            f"continuity={quality_metrics['continuity_score']:.4f}"
         )
         print(
             "Test best-threshold "
