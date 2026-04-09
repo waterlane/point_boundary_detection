@@ -1,14 +1,46 @@
+import torch
 import torch.nn.functional as F
+
 
 def bce_loss(pred, target):
     return F.binary_cross_entropy(pred, target)
 
+
 def combined_loss(pred, target):
     bce = F.binary_cross_entropy(pred, target)
-    
+
     # dice
     smooth = 1e-6
     intersection = (pred * target).sum()
-    dice = 1 - (2. * intersection + smooth) / (pred.sum() + target.sum() + smooth)
-    
+    dice = 1 - (2.0 * intersection + smooth) / (pred.sum() + target.sum() + smooth)
+
     return bce + dice
+
+
+def boundary_aware_distance_loss(
+    pred,
+    target,
+    boundary_threshold=0.005,
+    boundary_weight=6.0,
+):
+    """
+    针对“距离边界越近越重要”的回归损失：
+    1) 对真实距离小的点分配更高权重（加权 L1）。
+    2) 增加一个辅助二分类目标：是否在 boundary_threshold 内。
+    """
+    eps = 1e-6
+
+    # 回归项：小距离点有更大权重
+    near_factor = torch.exp(-target / (boundary_threshold + eps))
+    point_weight = 1.0 + boundary_weight * near_factor
+    reg_loss = (point_weight * torch.abs(pred - target)).mean()
+
+    # 分类项：提升“是否靠近边界”的可分性
+    near_target = (target <= boundary_threshold).float()
+    near_logit = (boundary_threshold - pred) / (boundary_threshold + eps)
+
+    pos_weight = (near_target.numel() - near_target.sum()) / (near_target.sum() + eps)
+    pos_weight = torch.clamp(pos_weight, min=1.0)
+    cls_loss = F.binary_cross_entropy_with_logits(near_logit, near_target, pos_weight=pos_weight)
+
+    return reg_loss + cls_loss
